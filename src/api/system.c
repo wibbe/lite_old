@@ -7,11 +7,16 @@
 #include <sys/stat.h>
 #include "api.h"
 #include "rencache.h"
-#ifdef _WIN32
-  #include <windows.h>
-#endif
+#include "event.h"
 
-extern SDL_Window *window;
+#define WIND32_MEAN_AND_LEAN
+#include <windows.h>
+
+
+extern SDL_Window * window;
+extern HWND hwnd;
+
+extern wchar_t * to_wstr(const char * in, int * text_length);
 
 
 static const char* button_name(int button) {
@@ -34,17 +39,75 @@ static char* key_name(char *dst, int sym) {
   return dst;
 }
 
+static int process_events(lua_State *L) {
+  event_t event = event_pop();
+  switch (event.type)
+  {
+    case EVENT_RESIZE:
+      lua_pushstring(L, "resized");
+      lua_pushnumber(L, event.resize.width);
+      lua_pushnumber(L, event.resize.height);
+      return 3;
+
+    case EVENT_MOUSEWHEEL:
+      lua_pushstring(L, "mousewheel");
+      lua_pushnumber(L, event.mousewheel.delta);
+      return 2;
+
+    case EVENT_MOUSEPRESS:
+      lua_pushstring(L, "mousepressed");
+      lua_pushstring(L, button_name(event.mousepress.button));
+      lua_pushnumber(L, event.mousepress.x);
+      lua_pushnumber(L, event.mousepress.y);
+      lua_pushnumber(L, event.mousepress.clicks);
+      return 5;
+
+    case EVENT_MOUSERELEASE:
+      lua_pushstring(L, "mousereleased");
+      lua_pushstring(L, button_name(event.mouserelease.button));
+      lua_pushnumber(L, event.mouserelease.x);
+      lua_pushnumber(L, event.mouserelease.y);
+      return 4;
+
+    case EVENT_MOUSEMOVED:
+      lua_pushstring(L, "mousemoved");
+      lua_pushnumber(L, event.mousemoved.x);
+      lua_pushnumber(L, event.mousemoved.y);
+      lua_pushnumber(L, event.mousemoved.xrel);
+      lua_pushnumber(L, event.mousemoved.yrel);
+      return 5;
+  }
+  return 0;
+}
 
 static int f_poll_event(lua_State *L) {
   char buf[16];
   int mx, my, wx, wy;
   SDL_Event e;
+  MSG msg;
 
-top:
+  if (event_has())
+    return process_events(L);
+
+  while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
+  {
+    if (msg.message == WM_QUIT)
+    {
+      lua_pushstring(L, "quit");
+      return 1;
+    }
+
+    TranslateMessage(&msg);
+    DispatchMessage(&msg);
+  }
+
+  return process_events(L);
+
+
   if ( !SDL_PollEvent(&e) ) {
     return 0;
   }
-
+#if 0
   switch (e.type) {
     case SDL_QUIT:
       lua_pushstring(L, "quit");
@@ -127,6 +190,7 @@ top:
     default:
       goto top;
   }
+  #endif
 
   return 0;
 }
@@ -174,6 +238,11 @@ static int f_set_cursor(lua_State *L) {
 static int f_set_window_title(lua_State *L) {
   const char *title = luaL_checkstring(L, 1);
   SDL_SetWindowTitle(window, title);
+
+  wchar_t * wtitle = to_wstr(title, NULL);
+  SetWindowTextW(hwnd, wtitle);
+  free(wtitle);
+
   return 0;
 }
 

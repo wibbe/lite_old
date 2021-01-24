@@ -2,8 +2,24 @@
 #include <stdbool.h>
 #include <assert.h>
 #include <math.h>
+
+#define D2D_USE_C_DEFINITIONS
+#define D2D1_INIT_GUID
+#define COBJMACROS
+#define CINTERFACE
+#define WIND32_MEAN_AND_LEAN
+
+#include <windows.h>
+#include <windowsx.h>
+#include "dwrite.h"
+//#include <dwrite/dwrite.h>
+#include <d2d1.h>
+#include <d2d1helper.h>
+#include <wincodec.h>
+
 #include "lib/stb/stb_truetype.h"
 #include "renderer.h"
+#include "fontcollectionloader.h"
 
 #define MAX_GLYPHSET 256
 
@@ -25,6 +41,16 @@ struct RenFont {
   int height;
 };
 
+extern HWND hwnd;
+extern ID2D1Factory * d2d_factory;
+extern IDWriteFactory * write_factory;
+static ID2D1HwndRenderTarget * render_target = NULL;
+static IDWriteFontCollectionLoader * font_collection_loader = NULL;
+static IDWriteFontCollection * font_collection = NULL;
+static UINT font_collection_key = 0xABCDEF;
+
+static int can_paint = 0;
+static int has_clip_rect = 0;
 
 static SDL_Window *window;
 static struct { int left, top, right, bottom; } clip;
@@ -55,14 +81,129 @@ static const char* utf8_to_codepoint(const char *p, unsigned *dst) {
   return p + 1;
 }
 
+static D2D1_MATRIX_3X2_F identity_matrix(void)
+{
+   D2D1_MATRIX_3X2_F mat = {
+      1.0f, 0.0f,
+      0.0f, 1.0f,
+      0.0f, 0.0f,
+   };
+   return mat;
+}
+
+static HRESULT create_device_resources(void)
+{
+   HRESULT result = S_OK;
+
+   if (!render_target) {
+      RECT rect;
+      GetClientRect(hwnd, &rect);
+
+      D2D1_SIZE_U size = {
+         .width = rect.right - rect.left,
+         .height = rect.bottom - rect.top,
+      };
+
+      D2D1_RENDER_TARGET_PROPERTIES render_target_properties = {
+         .type = D2D1_RENDER_TARGET_TYPE_DEFAULT,
+         .pixelFormat = { .format = DXGI_FORMAT_UNKNOWN, .alphaMode = D2D1_ALPHA_MODE_UNKNOWN },
+         .dpiX = 0.0f,
+         .dpiY = 0.0f,
+         .usage = D2D1_RENDER_TARGET_USAGE_NONE,
+         .minLevel = D2D1_FEATURE_LEVEL_DEFAULT,
+      };
+
+      D2D1_HWND_RENDER_TARGET_PROPERTIES hwnd_render_target_properties = {
+         .hwnd = hwnd,
+         .pixelSize = size,
+         .presentOptions = D2D1_PRESENT_OPTIONS_NONE,
+      };
+
+      printf("RenderTarget: %dx%d\n", size.width, size.height);
+
+      result = ID2D1Factory_CreateHwndRenderTarget(d2d_factory, &render_target_properties, &hwnd_render_target_properties, &render_target);
+      if (FAILED(result))
+      {
+         printf("Could not create HWND render target\n");
+      }
+
+      has_clip_rect = 0;
+   }
+
+   return result;
+}
+
+static void discard_device_resources(void) {
+  if (render_target)
+    ID2D1HwndRenderTarget_Release(render_target);
+  render_target = NULL;
+}
+
 
 void ren_init(SDL_Window *win) {
   assert(win);
   window = win;
   SDL_Surface *surf = SDL_GetWindowSurface(window);
   ren_set_clip_rect( (RenRect) { 0, 0, surf->w, surf->h } );
+
+  IFontCollectionLoaderCreate(&font_collection_loader);
+  IDWriteFactory_RegisterFontCollectionLoader(write_factory, font_collection_loader);
+
+  printf("Creating custom font collection...");
+  HRESULT result = IDWriteFactory_CreateCustomFontCollection(write_factory, font_collection_loader, &font_collection_key, sizeof(font_collection_key), &font_collection);
+  if (FAILED(result))
+    printf("failed\n");
+  else
+    printf("done\n");
 }
 
+void ren_close(void) {
+  IDWriteFontCollectionLoader_Release(font_collection_loader);
+  font_collection_loader = NULL;
+}
+
+void ren_resize(int width, int height) {
+   if (render_target) {
+      D2D1_SIZE_U size = {
+         .width = width,
+         .height = height,
+      };
+
+      HRESULT result = ID2D1HwndRenderTarget_Resize(render_target, &size);
+      if (FAILED(result))
+         printf("Could not resize window!\n");
+   }
+}
+
+void ren_begin_frame(void) {
+  HRESULT result = create_device_resources();
+
+  if (SUCCEEDED(result) && render_target) {
+    can_paint = 1;
+    ID2D1HwndRenderTarget_BeginDraw(render_target);
+  } else {
+    can_paint = 0;
+  }
+}
+
+void ren_end_frame(void) {
+  if (can_paint)
+  {
+     if (has_clip_rect) {
+      ID2D1RenderTarget_PopAxisAlignedClip((ID2D1RenderTarget *)render_target);
+      has_clip_rect = 0;
+    }
+
+    HRESULT result = ID2D1HwndRenderTarget_EndDraw(render_target, NULL, NULL);
+    if (FAILED(result)) {
+      printf("Error while painting app\n");
+      ID2D1HwndRenderTarget_Release(render_target);
+      render_target = NULL;
+    }
+  }
+
+  can_paint = 0;
+}
 
 void ren_update_rects(RenRect *rects, int count) {
   SDL_UpdateWindowSurfaceRects(window, (SDL_Rect*) rects, count);
@@ -79,6 +220,22 @@ void ren_set_clip_rect(RenRect rect) {
   clip.top    = rect.y;
   clip.right  = rect.x + rect.width;
   clip.bottom = rect.y + rect.height;
+
+  if (render_target && can_paint) {
+    if (has_clip_rect) {
+      ID2D1RenderTarget_PopAxisAlignedClip((ID2D1RenderTarget *)render_target);
+      has_clip_rect = 0;
+    }
+
+    D2D1_RECT_F clip_rect = {
+      .left   = rect.x,
+      .top    = rect.y,
+      .right  = rect.x + rect.width,
+      .bottom = rect.y + rect.height,
+    };
+    ID2D1RenderTarget_PushAxisAlignedClip((ID2D1RenderTarget *)render_target, &clip_rect, D2D1_ANTIALIAS_MODE_ALIASED);
+    has_clip_rect = 1;
+  }
 }
 
 
@@ -294,6 +451,31 @@ void ren_draw_rect(RenRect rect, RenColor color) {
     rect_draw_loop(color);
   } else {
     rect_draw_loop(blend_pixel(*d, color));
+  }
+
+  D2D1_COLOR_F d2d_color = {
+    .r = color.r / 255.0f,
+    .g = color.g / 255.0f,
+    .b = color.b / 255.0f,
+    .a = color.a / 255.0f,
+  };
+  D2D1_BRUSH_PROPERTIES props = {
+    .opacity = color.a,
+    .transform = identity_matrix(),
+  };
+
+  ID2D1SolidColorBrush * solid_brush = NULL;
+  HRESULT result = ID2D1HwndRenderTarget_CreateSolidColorBrush(render_target, &d2d_color, &props, &solid_brush);
+  if (SUCCEEDED(result))
+  {
+    D2D1_RECT_F d2d_rect = {
+      .left   = rect.x,
+      .top    = rect.y,
+      .right  = rect.x + rect.width,
+      .bottom = rect.y + rect.height,
+    };
+    ID2D1HwndRenderTarget_FillRectangle(render_target, &d2d_rect, (ID2D1Brush *)solid_brush);
+    ID2D1Brush_Release((ID2D1Brush *)solid_brush);
   }
 }
 

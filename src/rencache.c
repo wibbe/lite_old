@@ -237,6 +237,9 @@ void rencache_end_frame(void) {
   }
 
   /* redraw updated regions */
+
+  ren_begin_frame();
+
   bool has_free_commands = false;
   for (int i = 0; i < rect_count; i++) {
     /* draw */
@@ -282,6 +285,8 @@ void rencache_end_frame(void) {
       }
     }
   }
+
+  ren_end_frame();
 
   /* swap cell buffer and reset */
   unsigned *tmp = cells;

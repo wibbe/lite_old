@@ -12,9 +12,11 @@ typedef struct { int x, y, width, height; } RenRect;
 
 
 void ren_init(SDL_Window *win);
+void ren_close(void);
 void ren_update_rects(RenRect *rects, int count);
 void ren_set_clip_rect(RenRect rect);
 void ren_get_size(int *x, int *y);
+void ren_resize(int width, int height);
 
 RenImage* ren_new_image(int width, int height);
 void ren_free_image(RenImage *image);
@@ -25,6 +27,9 @@ void ren_set_font_tab_width(RenFont *font, int n);
 int ren_get_font_tab_width(RenFont *font);
 int ren_get_font_width(RenFont *font, const char *text);
 int ren_get_font_height(RenFont *font);
+
+void ren_begin_frame(void);
+void ren_end_frame(void);
 
 void ren_draw_rect(RenRect rect, RenColor color);
 void ren_draw_image(RenImage *image, RenRect *sub, int x, int y, RenColor color);
