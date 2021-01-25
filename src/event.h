@@ -10,6 +10,9 @@
 #define EVENT_MOUSEPRESS    3
 #define EVENT_MOUSERELEASE  4
 #define EVENT_MOUSEMOVED    5
+#define EVENT_TEXTINPUT     6
+#define EVENT_KEYPRESSED    7
+#define EVENT_KEYRELEASED   8
 
 struct resize_t {
   int width;
@@ -40,6 +43,18 @@ struct mouse_moved_t {
   int yrel;
 };
 
+struct textinput_t {
+  char ch;
+};
+
+struct keypressed_t {
+  char name[32];
+};
+
+struct keyreleased_t {
+  char name[32];
+};
+
 typedef struct event_t {
   int type;
   union {
@@ -48,6 +63,9 @@ typedef struct event_t {
     struct mouse_press_t   mousepress;
     struct mouse_release_t mouserelease;
     struct mouse_moved_t   mousemoved;
+    struct textinput_t     textinput;
+    struct keypressed_t    keypressed;
+    struct keyreleased_t   keyreleased;
   };
 } event_t;
 

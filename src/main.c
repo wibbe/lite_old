@@ -83,6 +83,102 @@ static void init_window_icon(void) {
 #endif
 }
 
+
+static void handle_key(int down, int key) {
+  char single_char_str[2] = {0};
+  char * name = NULL;
+
+  switch (key) {
+    case VK_SHIFT:
+      name = "left shift";
+      break;
+    case VK_LSHIFT:
+      name = "left shift";
+      break;
+    case VK_RSHIFT:
+      name = "right shift";
+      break;
+    case VK_RETURN:
+      name = "return";
+      break;
+    case VK_ESCAPE:
+      name = "escape";
+      break;
+    case VK_LEFT:
+      name = "left";
+      break;
+    case VK_RIGHT:
+      name = "right";
+      break;
+    case VK_UP:
+      name = "up";
+      break;
+    case VK_DOWN:
+      name = "down";
+      break;
+    case VK_END:
+      name = "end";
+      break;
+    case VK_HOME:
+      name = "home";
+      break;
+    case VK_SPACE:
+      name = "space";
+      break;
+    case VK_BACK:
+      name = "backspace";
+      break;
+    case VK_TAB:
+      name = "tab";
+      break;
+    case VK_PRIOR:
+      name = "pageup";
+      break;
+    case VK_NEXT:
+      name = "pagedown";
+      break;
+    case VK_CONTROL:
+      name = "left ctrl";
+      break;
+    case VK_LCONTROL:
+      name = "left ctrl";
+      break;
+    case VK_RCONTROL:
+      name = "right ctrl";
+      break;
+    case VK_MENU:
+      name = "alt";
+      break;
+    case VK_INSERT:
+      name = "insert";
+      break;
+    case VK_DELETE:
+      name = "delete";
+      break;
+    default:
+      {
+        if ((key >= 48 && key <= 57) || (key >= 65 && key <= 90)) {
+          single_char_str[0] = tolower(key);
+          name = single_char_str;
+        }
+      }
+      break;
+  }
+
+  if (name != NULL) {
+    if (down) {
+      event_t event = { .type = EVENT_KEYPRESSED };
+      strcpy(event.keypressed.name, name);
+      event_push(event);
+    } else {
+      event_t event = { .type = EVENT_KEYRELEASED };
+      strcpy(event.keyreleased.name, name);
+      event_push(event);
+    }
+  }
+}
+
+
 static LRESULT window_proc(HWND hwnd, UINT message, WPARAM w_param, LPARAM l_param) {
    LRESULT result = 0;
    BOOL handled = FALSE;
@@ -118,6 +214,20 @@ static LRESULT window_proc(HWND hwnd, UINT message, WPARAM w_param, LPARAM l_par
         result = 0;
         handled = TRUE;
       }
+      break;
+
+    case WM_SYSKEYDOWN:
+    case WM_KEYDOWN:
+      handle_key(1, w_param);
+      result = 0;
+      handled = TRUE;
+      break;
+
+    case WM_SYSKEYUP:
+    case WM_KEYUP:
+      handle_key(0, w_param);
+      result = 0;
+      handled = TRUE;
       break;
 
     case WM_MOUSEWHEEL:
@@ -229,6 +339,19 @@ static LRESULT window_proc(HWND hwnd, UINT message, WPARAM w_param, LPARAM l_par
         }
 
         event_push(event);
+        result = 0;
+        handled = TRUE;
+      }
+      break;
+
+    case WM_CHAR:
+      {
+        int ch = (int)w_param;
+        if (ch >= 32 && ch <= 127)
+        {
+          event_t event = { .type = EVENT_TEXTINPUT, .textinput.ch = (char)ch };
+          event_push(event);
+        }
         result = 0;
         handled = TRUE;
       }

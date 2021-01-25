@@ -12,6 +12,51 @@
 
 #define MAX_GLYPHSET 256
 
+#include <GL/gl.h>
+
+typedef char GLchar;
+typedef ptrdiff_t GLintptr;
+typedef ptrdiff_t GLsizeiptr;
+
+#ifndef HINST_THISCOMPONENT
+IMAGE_DOS_HEADER __ImageBase;
+#define HINST_THISCOMPONENT ((HINSTANCE)&__ImageBase)
+#endif
+
+#define GL_LIST \
+    GL_F(void,      BlendEquation,           GLenum mode) \
+    GL_F(void,      ActiveTexture,           GLenum texture)
+
+typedef BOOL WINAPI wglChoosePixelFormatARBF(HDC hdc, const int *piAttribIList, const FLOAT *pfAttribFList, UINT nMaxFormats, int *piFormats, UINT *nNumFormats);
+typedef HGLRC WINAPI wglCreateContextAttribsARBF(HDC hDC, HGLRC hShareContext, const int *attribList);
+
+wglChoosePixelFormatARBF *wglChoosePixelFormatARB = 0;
+wglCreateContextAttribsARBF *wglCreateContextAttribsARB = 0;
+
+#define WGL_DRAW_TO_WINDOW_ARB                  0x2001
+#define WGL_ACCELERATION_ARB                    0x2003
+#define WGL_FULL_ACCELERATION_ARB               0x2027
+#define WGL_SUPPORT_OPENGL_ARB                  0x2010
+#define WGL_DOUBLE_BUFFER_ARB                   0x2011
+#define WGL_PIXEL_TYPE_ARB                      0x2013
+#define WGL_TYPE_RGBA_ARB                       0x202B
+#define WGL_FRAMEBUFFER_SRGB_CAPABLE_ARB        0x20A9
+#define WGL_CONTEXT_MAJOR_VERSION_ARB           0x2091
+#define WGL_CONTEXT_MINOR_VERSION_ARB           0x2092
+#define WGL_CONTEXT_FLAGS_ARB                   0x2094
+#define WGL_CONTEXT_PROFILE_MASK_ARB            0x9126
+#define WGL_CONTEXT_DEBUG_BIT_ARB               0x0001
+#define WGL_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB 0x00000002
+#define GL_BGRA 0x80E1
+
+// Common functions.
+#define GL_F(ret, name, ...) typedef ret name##proc(__VA_ARGS__); name##proc * gl##name;
+GL_LIST
+#undef GL_F
+
+
+
+
 struct RenImage {
   RenColor *pixels;
   int width, height;
@@ -33,8 +78,8 @@ struct RenFont {
 extern HWND hwnd;
 
 static struct { int left, top, right, bottom; } clip;
-static BITMAPINFO window_bitmap = { 0 };
 static RenImage * back_buffer = NULL;
+static int back_buffer_texture = 0;
 
 
 static void* check_alloc(void *ptr) {
@@ -62,18 +107,150 @@ static const char* utf8_to_codepoint(const char *p, unsigned *dst) {
   return p + 1;
 }
 
+static int set_window_pixel_format(HDC dc) {
+  int pixel_format = 0;
+  int extended_pixel_format = 0;
+  if (wglChoosePixelFormatARB) {
+    int attrib[] = {
+      WGL_DRAW_TO_WINDOW_ARB, GL_TRUE,
+      WGL_ACCELERATION_ARB, WGL_FULL_ACCELERATION_ARB,
+      WGL_SUPPORT_OPENGL_ARB, GL_TRUE,
+      WGL_DOUBLE_BUFFER_ARB, GL_TRUE,
+      WGL_PIXEL_TYPE_ARB, WGL_TYPE_RGBA_ARB,
+      WGL_FRAMEBUFFER_SRGB_CAPABLE_ARB, GL_TRUE,
+      0,
+    };
+    wglChoosePixelFormatARB(dc, attrib, 0, 1, &pixel_format, &extended_pixel_format);
+  }
+
+  if (!extended_pixel_format) {
+    PIXELFORMATDESCRIPTOR desired_pixel_format_desc = { 0 };
+
+    desired_pixel_format_desc.nSize = sizeof(PIXELFORMATDESCRIPTOR);
+    desired_pixel_format_desc.nVersion = 1;
+    desired_pixel_format_desc.dwFlags = PFD_SUPPORT_OPENGL | PFD_DRAW_TO_WINDOW | PFD_DOUBLEBUFFER;
+    desired_pixel_format_desc.iPixelType = PFD_TYPE_RGBA;
+    desired_pixel_format_desc.cColorBits = 32;
+    desired_pixel_format_desc.cAlphaBits = 8;
+    desired_pixel_format_desc.cDepthBits = 32;
+    desired_pixel_format_desc.dwLayerMask = PFD_MAIN_PLANE;
+
+    pixel_format = ChoosePixelFormat(dc, &desired_pixel_format_desc);
+    if (!pixel_format) {
+      printf("ChoosePixelFormat failed\n");
+      return 0;
+    }
+  }
+
+  PIXELFORMATDESCRIPTOR pixel_format_desc;
+  DescribePixelFormat(dc, pixel_format, sizeof(pixel_format_desc), &pixel_format_desc);
+  if (!SetPixelFormat(dc, pixel_format, &pixel_format_desc)) {
+    printf("SetPixelFormat failed\n");
+    return 0;
+  }
+
+  return 1;
+}
+
+static int gl_init(void) {
+  WNDCLASSA wc = {0};
+  wc.style = CS_OWNDC;
+  wc.lpfnWndProc = DefWindowProcA;
+  wc.hInstance = HINST_THISCOMPONENT;
+  wc.lpszClassName = "WGLLoaderClass";
+  if (!RegisterClassA(&wc)) {
+    return 0;
+  }
+
+  HWND window = CreateWindowExA(0, wc.lpszClassName, "WGLLoader", 0, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, 0, 0, wc.hInstance, 0);
+  if (!window) {
+    return 0;
+  }
+
+  HDC dc = GetDC(window);
+  set_window_pixel_format(dc);
+  HGLRC glc = wglCreateContext(dc);
+  if (!wglMakeCurrent(dc, glc)) {
+    return 0;
+  }
+
+  HINSTANCE dll = LoadLibraryA("opengl32.dll");
+  if (!dll) {
+    return 0;
+  }
+
+  typedef PROC WINAPI wglGetProcAddressF(LPCSTR lpszProc);
+
+  wglGetProcAddressF* wglGetProcAddress = (wglGetProcAddressF*)GetProcAddress(dll, "wglGetProcAddress");
+  wglChoosePixelFormatARB = (wglChoosePixelFormatARBF *)wglGetProcAddress("wglChoosePixelFormatARB");
+  wglCreateContextAttribsARB = (wglCreateContextAttribsARBF *)wglGetProcAddress("wglCreateContextAttribsARB");
+
+#define GL_F(ret, name, ...) \
+            gl##name = (name##proc *)wglGetProcAddress("gl" #name); \
+            if (!gl##name) { \
+                printf("Function gl" #name " couldn't be loaded from opengl32.dll\n"); \
+                goto end; \
+            }
+        GL_LIST
+#undef GL_F
+end:
+
+    wglMakeCurrent(0, 0);
+    wglDeleteContext(glc);
+    ReleaseDC(window, dc);
+    DestroyWindow(window);
+
+    return 1;
+}
+
+static int window_init_gl(HWND hwnd) {
+  HDC dc = GetDC(hwnd);
+  set_window_pixel_format(dc);
+
+  static int gl_attribs[] =
+  {
+    WGL_CONTEXT_MAJOR_VERSION_ARB, 3,
+    WGL_CONTEXT_MINOR_VERSION_ARB, 2,
+    WGL_CONTEXT_FLAGS_ARB, 0,
+    WGL_CONTEXT_PROFILE_MASK_ARB, WGL_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB,
+    0,
+  };
+
+  HGLRC glc = 0;
+  if (wglCreateContextAttribsARB) {
+      glc = wglCreateContextAttribsARB(dc, 0, gl_attribs);
+  } else {
+    printf("wglCreateContextAttribsARB not available\n");
+    return 0;
+  }
+
+  if (!glc) {
+    printf("wglCreateContextAttribsARB failed\n");
+    return 0;
+  }
+
+  if (!wglMakeCurrent(dc, glc)) {
+    printf("wglMakeCurrent failed\n");
+    return 0;
+  }
+
+  ReleaseDC(hwnd, dc);
+  return 1;
+}
+
 void ren_init(int width, int height) {
   ren_set_clip_rect( (RenRect) { 0, 0, width, height } );
-
-  memset(&window_bitmap, 0, sizeof(BITMAPINFO));
-  window_bitmap.bmiHeader.biSize = sizeof(window_bitmap.bmiHeader);
-  window_bitmap.bmiHeader.biWidth = width;
-  window_bitmap.bmiHeader.biHeight = -height;
-  window_bitmap.bmiHeader.biPlanes = 1;
-  window_bitmap.bmiHeader.biBitCount = 32;
-  window_bitmap.bmiHeader.biCompression = BI_RGB;
-
   back_buffer = ren_new_image(width, height);
+
+  gl_init();
+  window_init_gl(hwnd);
+
+  glEnable(GL_TEXTURE_2D);
+
+  glGenTextures(1, &back_buffer_texture);
+  glBindTexture(GL_TEXTURE_2D, back_buffer_texture);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 }
 
 void ren_close(void) {
@@ -114,14 +291,29 @@ void ren_get_size(int *x, int *y) {
 }
 
 void ren_present(void) {
+  glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+  glClear(GL_COLOR_BUFFER_BIT);
+
+  glViewport(0, 0, back_buffer->width, back_buffer->height);
+
+  glMatrixMode(GL_PROJECTION);
+  glLoadIdentity();
+  glOrtho(0.0, back_buffer->width, 0.0, back_buffer->height, 1.0, -1.0);
+  glMatrixMode(GL_MODELVIEW);
+  glLoadIdentity();
+
+  glBindTexture(GL_TEXTURE_2D, back_buffer_texture);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, back_buffer->width, back_buffer->height, 0, GL_BGRA, GL_UNSIGNED_BYTE, back_buffer->pixels);
+
+  glBegin(GL_QUADS);
+    glTexCoord2f(0.0f, 1.0f); glVertex2f(0.0f, 0.0f);
+    glTexCoord2f(1.0f, 1.0f); glVertex2f(back_buffer->width, 0.0f);
+    glTexCoord2f(1.0f, 0.0f); glVertex2f(back_buffer->width, back_buffer->height);
+    glTexCoord2f(0.0f, 0.0f); glVertex2f(0.0f, back_buffer->height);
+  glEnd();
+
   HDC dc = GetDC(hwnd);
-  StretchDIBits(dc,
-                0, 0, back_buffer->width, back_buffer->height,
-                0, 0, back_buffer->width, back_buffer->height,
-                back_buffer->pixels,
-                &window_bitmap,
-                DIB_RGB_COLORS,
-                SRCCOPY);
+  SwapBuffers(dc);
   ReleaseDC(hwnd, dc);
 }
 

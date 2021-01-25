@@ -76,6 +76,25 @@ static int process_events(lua_State *L) {
       lua_pushnumber(L, event.mousemoved.xrel);
       lua_pushnumber(L, event.mousemoved.yrel);
       return 5;
+
+    case EVENT_KEYPRESSED:
+      lua_pushstring(L, "keypressed");
+      lua_pushstring(L, event.keypressed.name);
+      return 2;
+
+    case EVENT_KEYRELEASED:
+      lua_pushstring(L, "keyreleased");
+      lua_pushstring(L, event.keyreleased.name);
+      return 2;
+
+    case EVENT_TEXTINPUT:
+      {
+        char text[32];
+        sprintf(text, "%c", event.textinput.ch);
+        lua_pushstring(L, "textinput");
+        lua_pushstring(L, text);
+        return 2;
+      }
   }
   return 0;
 }
