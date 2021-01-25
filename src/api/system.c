@@ -12,7 +12,6 @@
 #include <windows.h>
 
 
-extern SDL_Window * window;
 extern HWND hwnd;
 
 extern wchar_t * to_wstr(const char * in, int * text_length);
@@ -29,12 +28,14 @@ static const char* button_name(int button) {
 
 
 static char* key_name(char *dst, int sym) {
+  /*
   strcpy(dst, SDL_GetKeyName(sym));
   char *p = dst;
   while (*p) {
     *p = tolower(*p);
     p++;
   }
+  */
   return dst;
 }
 
@@ -82,7 +83,7 @@ static int process_events(lua_State *L) {
 static int f_poll_event(lua_State *L) {
   char buf[16];
   int mx, my, wx, wy;
-  SDL_Event e;
+  //SDL_Event e;
   MSG msg;
 
   if (event_has())
@@ -203,7 +204,7 @@ static int f_wait_event(lua_State *L) {
 }
 
 
-static SDL_Cursor* cursor_cache[SDL_SYSTEM_CURSOR_HAND + 1];
+//static SDL_Cursor* cursor_cache[SDL_SYSTEM_CURSOR_HAND + 1];
 
 static const char *cursor_opts[] = {
   "arrow",
@@ -215,11 +216,16 @@ static const char *cursor_opts[] = {
 };
 
 static const int cursor_enums[] = {
-  SDL_SYSTEM_CURSOR_ARROW,
-  SDL_SYSTEM_CURSOR_IBEAM,
-  SDL_SYSTEM_CURSOR_SIZEWE,
-  SDL_SYSTEM_CURSOR_SIZENS,
-  SDL_SYSTEM_CURSOR_HAND
+  1,
+  2,
+  3,
+  4,
+  5
+  //SDL_SYSTEM_CURSOR_ARROW,
+  //SDL_SYSTEM_CURSOR_IBEAM,
+  //SDL_SYSTEM_CURSOR_SIZEWE,
+  //SDL_SYSTEM_CURSOR_SIZENS,
+  //SDL_SYSTEM_CURSOR_HAND
 };
 
 static int f_set_cursor(lua_State *L) {
@@ -250,21 +256,17 @@ static const char *window_opts[] = { "normal", "maximized", "fullscreen", 0 };
 enum { WIN_NORMAL, WIN_MAXIMIZED, WIN_FULLSCREEN };
 
 static int f_set_window_mode(lua_State *L) {
-/*
   int n = luaL_checkoption(L, 1, "normal", window_opts);
-  SDL_SetWindowFullscreen(window,
-    n == WIN_FULLSCREEN ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
-  if (n == WIN_NORMAL) { SDL_RestoreWindow(window); }
-  if (n == WIN_MAXIMIZED) { SDL_MaximizeWindow(window); }
-*/
+
+  if (n == WIN_NORMAL) ShowWindow(hwnd, SW_RESTORE);
+  if (n == WIN_MAXIMIZED || n == WIN_FULLSCREEN) ShowWindow(hwnd, SW_MAXIMIZE);
+
   return 0;
 }
 
 
 static int f_window_has_focus(lua_State *L) {
-  //unsigned flags = SDL_GetWindowFlags(window);
-  //lua_pushboolean(L, flags & SDL_WINDOW_INPUT_FOCUS);
-  lua_pushboolean(L, 1);
+  lua_pushboolean(L, GetFocus() == hwnd);
   return 1;
 }
 
@@ -322,6 +324,7 @@ static int f_list_dir(lua_State *L) {
   while ( (entry = readdir(dir)) ) {
     if (strcmp(entry->d_name, "." ) == 0) { continue; }
     if (strcmp(entry->d_name, "..") == 0) { continue; }
+
     lua_pushstring(L, entry->d_name);
     lua_rawseti(L, -2, i);
     i++;
@@ -398,15 +401,20 @@ static int f_set_clipboard(lua_State *L) {
 
 
 static int f_get_time(lua_State *L) {
+  LARGE_INTEGER time, frequency;
+  QueryPerformanceCounter(&time);
+  QueryPerformanceFrequency(&frequency);
+  double n = time.QuadPart / (double)frequency.QuadPart;
+
   //double n = SDL_GetPerformanceCounter() / (double) SDL_GetPerformanceFrequency();
-  //lua_pushnumber(L, n);
-  lua_pushnumber(L, 0);
+  lua_pushnumber(L, n);
   return 1;
 }
 
 
 static int f_sleep(lua_State *L) {
   double n = luaL_checknumber(L, 1);
+  Sleep(n * 1000);
   //SDL_Delay(n * 1000);
   return 0;
 }

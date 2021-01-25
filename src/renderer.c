@@ -3,23 +3,12 @@
 #include <assert.h>
 #include <math.h>
 
-#define D2D_USE_C_DEFINITIONS
-#define D2D1_INIT_GUID
-#define COBJMACROS
-#define CINTERFACE
 #define WIND32_MEAN_AND_LEAN
-
 #include <windows.h>
 #include <windowsx.h>
-#include "dwrite.h"
-//#include <dwrite/dwrite.h>
-#include <d2d1.h>
-#include <d2d1helper.h>
-#include <wincodec.h>
 
 #include "lib/stb/stb_truetype.h"
 #include "renderer.h"
-#include "fontcollectionloader.h"
 
 #define MAX_GLYPHSET 256
 
@@ -39,27 +28,13 @@ struct RenFont {
   GlyphSet *sets[MAX_GLYPHSET];
   float size;
   int height;
-
-  IDWriteTextFormat * text_format;
 };
 
 extern HWND hwnd;
-extern ID2D1Factory * d2d_factory;
-extern IDWriteFactory * write_factory;
-static ID2D1HwndRenderTarget * render_target = NULL;
-static IDWriteFontCollectionLoader * font_collection_loader = NULL;
-static IDWriteFontCollection * font_collection = NULL;
-static UINT font_collection_key = 0xABCDEF;
 
-static int can_paint = 0;
-static int has_clip_rect = 0;
-
-static SDL_Window *window;
 static struct { int left, top, right, bottom; } clip;
-
-
-extern wchar_t * to_wstr(const char * in, int * text_length);
-extern float to_dips_size(float points);
+static BITMAPINFO window_bitmap = { 0 };
+static RenImage * back_buffer = NULL;
 
 
 static void* check_alloc(void *ptr) {
@@ -87,129 +62,30 @@ static const char* utf8_to_codepoint(const char *p, unsigned *dst) {
   return p + 1;
 }
 
-static D2D1_MATRIX_3X2_F identity_matrix(void)
-{
-   D2D1_MATRIX_3X2_F mat = {
-      1.0f, 0.0f,
-      0.0f, 1.0f,
-      0.0f, 0.0f,
-   };
-   return mat;
-}
+void ren_init(int width, int height) {
+  ren_set_clip_rect( (RenRect) { 0, 0, width, height } );
 
-static HRESULT create_device_resources(void)
-{
-   HRESULT result = S_OK;
+  memset(&window_bitmap, 0, sizeof(BITMAPINFO));
+  window_bitmap.bmiHeader.biSize = sizeof(window_bitmap.bmiHeader);
+  window_bitmap.bmiHeader.biWidth = width;
+  window_bitmap.bmiHeader.biHeight = -height;
+  window_bitmap.bmiHeader.biPlanes = 1;
+  window_bitmap.bmiHeader.biBitCount = 32;
+  window_bitmap.bmiHeader.biCompression = BI_RGB;
 
-   if (!render_target) {
-      RECT rect;
-      GetClientRect(hwnd, &rect);
-
-      D2D1_SIZE_U size = {
-         .width = rect.right - rect.left,
-         .height = rect.bottom - rect.top,
-      };
-
-      D2D1_RENDER_TARGET_PROPERTIES render_target_properties = {
-         .type = D2D1_RENDER_TARGET_TYPE_DEFAULT,
-         .pixelFormat = { .format = DXGI_FORMAT_UNKNOWN, .alphaMode = D2D1_ALPHA_MODE_UNKNOWN },
-         .dpiX = 0.0f,
-         .dpiY = 0.0f,
-         .usage = D2D1_RENDER_TARGET_USAGE_NONE,
-         .minLevel = D2D1_FEATURE_LEVEL_DEFAULT,
-      };
-
-      D2D1_HWND_RENDER_TARGET_PROPERTIES hwnd_render_target_properties = {
-         .hwnd = hwnd,
-         .pixelSize = size,
-         .presentOptions = D2D1_PRESENT_OPTIONS_NONE,
-      };
-
-      printf("RenderTarget: %dx%d\n", size.width, size.height);
-
-      result = ID2D1Factory_CreateHwndRenderTarget(d2d_factory, &render_target_properties, &hwnd_render_target_properties, &render_target);
-      if (FAILED(result))
-      {
-         printf("Could not create HWND render target\n");
-      }
-
-      has_clip_rect = 0;
-   }
-
-   return result;
-}
-
-static void discard_device_resources(void) {
-  if (render_target)
-    ID2D1HwndRenderTarget_Release(render_target);
-  render_target = NULL;
-}
-
-
-void ren_init(void) {
-  /*
-  assert(win);
-  window = win;
-  SDL_Surface *surf = SDL_GetWindowSurface(window);
-  ren_set_clip_rect( (RenRect) { 0, 0, surf->w, surf->h } );
-  */
-  IFontCollectionLoaderCreate(&font_collection_loader);
-  IDWriteFactory_RegisterFontCollectionLoader(write_factory, font_collection_loader);
-
-  printf("Creating custom font collection...");
-  HRESULT result = IDWriteFactory_CreateCustomFontCollection(write_factory, font_collection_loader, &font_collection_key, sizeof(font_collection_key), &font_collection);
-  if (FAILED(result))
-    printf("failed\n");
-  else
-    printf("done\n");
+  back_buffer = ren_new_image(width, height);
 }
 
 void ren_close(void) {
-  IDWriteFontCollectionLoader_Release(font_collection_loader);
-  font_collection_loader = NULL;
+  ren_free_image(back_buffer);
 }
 
 void ren_resize(int width, int height) {
-   if (render_target) {
-      D2D1_SIZE_U size = {
-         .width = width,
-         .height = height,
-      };
+  window_bitmap.bmiHeader.biWidth = width;
+  window_bitmap.bmiHeader.biHeight = -height;
 
-      HRESULT result = ID2D1HwndRenderTarget_Resize(render_target, &size);
-      if (FAILED(result))
-         printf("Could not resize window!\n");
-   }
-}
-
-void ren_begin_frame(void) {
-  HRESULT result = create_device_resources();
-
-  if (SUCCEEDED(result) && render_target) {
-    can_paint = 1;
-    ID2D1HwndRenderTarget_BeginDraw(render_target);
-  } else {
-    can_paint = 0;
-  }
-}
-
-void ren_end_frame(void) {
-  if (can_paint)
-  {
-     if (has_clip_rect) {
-      ID2D1RenderTarget_PopAxisAlignedClip((ID2D1RenderTarget *)render_target);
-      has_clip_rect = 0;
-    }
-
-    HRESULT result = ID2D1HwndRenderTarget_EndDraw(render_target, NULL, NULL);
-    if (FAILED(result)) {
-      printf("Error while painting app\n");
-      ID2D1HwndRenderTarget_Release(render_target);
-      render_target = NULL;
-    }
-  }
-
-  can_paint = 0;
+  ren_free_image(back_buffer);
+  back_buffer = ren_new_image(width, height);
 }
 
 void ren_update_rects(RenRect *rects, int count) {
@@ -229,38 +105,24 @@ void ren_set_clip_rect(RenRect rect) {
   clip.top    = rect.y;
   clip.right  = rect.x + rect.width;
   clip.bottom = rect.y + rect.height;
-
-  if (render_target && can_paint) {
-    if (has_clip_rect) {
-      ID2D1RenderTarget_PopAxisAlignedClip((ID2D1RenderTarget *)render_target);
-      has_clip_rect = 0;
-    }
-
-    D2D1_RECT_F clip_rect = {
-      .left   = rect.x,
-      .top    = rect.y,
-      .right  = rect.x + rect.width,
-      .bottom = rect.y + rect.height,
-    };
-    ID2D1RenderTarget_PushAxisAlignedClip((ID2D1RenderTarget *)render_target, &clip_rect, D2D1_ANTIALIAS_MODE_ALIASED);
-    has_clip_rect = 1;
-  }
 }
 
 
 void ren_get_size(int *x, int *y) {
-  //SDL_Surface *surf = SDL_GetWindowSurface(window);
-  //*x = surf->w;
-  //*y = surf->h;
+  *x = back_buffer->width;
+  *y = back_buffer->height;
+}
 
-  if (render_target) {
-    D2D1_SIZE_F size = ID2D1HwndRenderTarget_GetSize(render_target);
-    *x = size.width;
-    *y = size.height;
-  } else {
-    *x = 0;
-    *y = 0;
-  }
+void ren_present(void) {
+  HDC dc = GetDC(hwnd);
+  StretchDIBits(dc,
+                0, 0, back_buffer->width, back_buffer->height,
+                0, 0, back_buffer->width, back_buffer->height,
+                back_buffer->pixels,
+                &window_bitmap,
+                DIB_RGB_COLORS,
+                SRCCOPY);
+  ReleaseDC(hwnd, dc);
 }
 
 
@@ -338,98 +200,9 @@ RenFont* ren_load_font(const char *filename, float size) {
   RenFont *font = NULL;
   FILE *fp = NULL;
 
-  printf("Loading font %s\n", filename);
-  wchar_t * font_filename = to_wstr(filename, NULL);
-
-  IDWriteFontFile * font_file[1];
-  HRESULT result = IDWriteFactory_CreateFontFileReference(write_factory, font_filename, NULL, &font_file[0]);
-  free(font_filename);
-  if (FAILED(result)) {
-    printf("Could not load font file\n");
-    return 0;
-  }
-
-  IDWriteFontFace * font_face;
-  result = IDWriteFactory_CreateFontFace(write_factory, DWRITE_FONT_FACE_TYPE_TRUETYPE, 1, font_file, 0, DWRITE_FONT_SIMULATIONS_NONE, &font_face);
-  IDWriteFontFile_Release(font_file[0]);
-  if (FAILED(result)) {
-    printf("Could not create font face\n");
-    return 0;
-  }
-
-  IDWriteFont * dwrite_font;
-  result = IDWriteFontCollection_GetFontFromFontFace(font_collection, font_face, &dwrite_font);
-  if (FAILED(result)) {
-    printf("Could not get font from font face\n");
-    IDWriteFontFace_Release(font_face);
-    return 0;
-  }
-
-  IDWriteFontFamily * font_family;
-  result = IDWriteFont_GetFontFamily(dwrite_font, &font_family);
-  if (FAILED(result)) {
-    printf("Could not get font family\n");
-    IDWriteFontFamily_Release(font_family);
-    IDWriteFont_Release(dwrite_font);
-    IDWriteFontFace_Release(font_face);
-    return 0;
-  }
-
-
-  IDWriteLocalizedStrings * family_names;
-  result = IDWriteFontFamily_GetFamilyNames(font_family, &family_names);
-  if (FAILED(result)) {
-    printf("Could not get face names\n");
-    IDWriteLocalizedStrings_Release(family_names);
-    IDWriteFontFamily_Release(font_family);
-    IDWriteFont_Release(dwrite_font);
-    IDWriteFontFace_Release(font_face);
-    return 0;
-  }
-
-  // Use the first family name in the string. (This might not work for every font)
-  UINT32 index = 0;
-  UINT32 length = 0;
-  IDWriteLocalizedStrings_GetStringLength(family_names, index, &length);
-
-  wchar_t * family_name = malloc(sizeof(wchar_t) * (length + 1));
-  IDWriteLocalizedStrings_GetString(family_names, index, family_name, length + 1);
-  wprintf(L"Family Name: %s\n", family_name);
-
-  IDWriteTextFormat * text_format;
-  result = IDWriteFactory_CreateTextFormat(write_factory,
-                                           family_name,
-                                           font_collection,
-                                           DWRITE_FONT_WEIGHT_NORMAL,
-                                           DWRITE_FONT_STYLE_NORMAL,
-                                           DWRITE_FONT_STRETCH_NORMAL,
-                                           //to_dips_size(size),
-                                           size,
-                                           L"en-us",
-                                           &text_format);
-  free(family_name);
-
-  if (FAILED(result)) {
-    printf("Could not create text format object\n");
-    IDWriteLocalizedStrings_Release(family_names);
-    IDWriteFontFamily_Release(font_family);
-    IDWriteFont_Release(dwrite_font);
-    IDWriteFontFace_Release(font_face);
-    return 0;
-  }
-
-  IDWriteTextFormat_SetTextAlignment(text_format, DWRITE_TEXT_ALIGNMENT_LEADING);
-  IDWriteTextFormat_SetParagraphAlignment(text_format, DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
-
-  IDWriteLocalizedStrings_Release(family_names);
-  IDWriteFontFamily_Release(font_family);
-  IDWriteFont_Release(dwrite_font);
-  IDWriteFontFace_Release(font_face);
-
   /* init font */
   font = check_alloc(calloc(1, sizeof(RenFont)));
   font->size = size;
-  font->text_format = text_format;
 
   /* load font into buffer */
   fp = fopen(filename, "rb");
@@ -474,11 +247,6 @@ void ren_free_font(RenFont *font) {
       ren_free_image(set->image);
       free(set);
     }
-  }
-
-  if (font->text_format != NULL) {
-    IDWriteTextFormat_Release(font->text_format);
-    font->text_format = NULL;
   }
 
   free(font->data);
@@ -547,7 +315,7 @@ static inline RenColor blend_pixel2(RenColor dst, RenColor src, RenColor color) 
 
 void ren_draw_rect(RenRect rect, RenColor color) {
   if (color.a == 0) { return; }
-/*
+
   int x1 = rect.x < clip.left ? clip.left : rect.x;
   int y1 = rect.y < clip.top  ? clip.top  : rect.y;
   int x2 = rect.x + rect.width;
@@ -555,42 +323,14 @@ void ren_draw_rect(RenRect rect, RenColor color) {
   x2 = x2 > clip.right  ? clip.right  : x2;
   y2 = y2 > clip.bottom ? clip.bottom : y2;
 
-  SDL_Surface *surf = SDL_GetWindowSurface(window);
-  RenColor *d = (RenColor*) surf->pixels;
-  d += x1 + y1 * surf->w;
-  int dr = surf->w - (x2 - x1);
+  RenColor *d = back_buffer->pixels;
+  d += x1 + y1 * back_buffer->width;
+  int dr = back_buffer->width - (x2 - x1);
 
   if (color.a == 0xff) {
     rect_draw_loop(color);
   } else {
     rect_draw_loop(blend_pixel(*d, color));
-  }
-*/
-  if (can_paint) {
-    D2D1_COLOR_F d2d_color = {
-      .r = color.r / 255.0f,
-      .g = color.g / 255.0f,
-      .b = color.b / 255.0f,
-      .a = color.a / 255.0f,
-    };
-    D2D1_BRUSH_PROPERTIES props = {
-      .opacity = color.a,
-      .transform = identity_matrix(),
-    };
-
-    ID2D1SolidColorBrush * solid_brush = NULL;
-    HRESULT result = ID2D1HwndRenderTarget_CreateSolidColorBrush(render_target, &d2d_color, &props, &solid_brush);
-    if (SUCCEEDED(result))
-    {
-      D2D1_RECT_F d2d_rect = {
-        .left   = rect.x,
-        .top    = rect.y,
-        .right  = rect.x + rect.width,
-        .bottom = rect.y + rect.height,
-      };
-      ID2D1HwndRenderTarget_FillRectangle(render_target, &d2d_rect, (ID2D1Brush *)solid_brush);
-      ID2D1Brush_Release((ID2D1Brush *)solid_brush);
-    }
   }
 }
 
@@ -599,7 +339,6 @@ void ren_draw_image(RenImage *image, RenRect *sub, int x, int y, RenColor color)
   if (color.a == 0) { return; }
 
   /* clip */
-  /*
   int n;
   if ((n = clip.left - x) > 0) { sub->width  -= n; sub->x += n; x += n; }
   if ((n = clip.top  - y) > 0) { sub->height -= n; sub->y += n; y += n; }
@@ -609,16 +348,14 @@ void ren_draw_image(RenImage *image, RenRect *sub, int x, int y, RenColor color)
   if (sub->width <= 0 || sub->height <= 0) {
     return;
   }
-  */
+
   /* draw */
-  /*
-  SDL_Surface *surf = SDL_GetWindowSurface(window);
   RenColor *s = image->pixels;
-  RenColor *d = (RenColor*) surf->pixels;
+  RenColor *d = back_buffer->pixels;
   s += sub->x + sub->y * image->width;
-  d += x + y * surf->w;
+  d += x + y * back_buffer->width;
   int sr = image->width - sub->width;
-  int dr = surf->w - sub->width;
+  int dr = back_buffer->width - sub->width;
 
   for (int j = 0; j < sub->height; j++) {
     for (int i = 0; i < sub->width; i++) {
@@ -629,12 +366,10 @@ void ren_draw_image(RenImage *image, RenRect *sub, int x, int y, RenColor color)
     d += dr;
     s += sr;
   }
-  */
 }
 
 
 int ren_draw_text(RenFont *font, const char *text, int x, int y, RenColor color) {
-  /*
   RenRect rect;
   const char *p = text;
   unsigned codepoint;
@@ -649,37 +384,5 @@ int ren_draw_text(RenFont *font, const char *text, int x, int y, RenColor color)
     ren_draw_image(set->image, &rect, x + g->xoff, y + g->yoff, color);
     x += g->xadvance;
   }
-  */
-/*
-  if (can_paint) {
-    int str_len;
-    wchar_t * str = to_wstr(text, &str_len);
-    D2D1_RECT_F d2d_rect = {
-      .left   = x,
-      .top    = y,
-      .right  = x + 1000,
-      .bottom = y + 1000,
-    };
-
-    D2D1_COLOR_F d2d_color = {
-      .r = color.r / 255.0f,
-      .g = color.g / 255.0f,
-      .b = color.b / 255.0f,
-      .a = color.a / 255.0f,
-    };
-    D2D1_BRUSH_PROPERTIES props = {
-      .opacity = color.a,
-      .transform = identity_matrix(),
-    };
-
-    ID2D1SolidColorBrush * solid_brush = NULL;
-    HRESULT result = ID2D1HwndRenderTarget_CreateSolidColorBrush(render_target, &d2d_color, &props, &solid_brush);
-    if (SUCCEEDED(result))
-    {
-      ID2D1HwndRenderTarget_DrawText(render_target, str, str_len, font->text_format, &d2d_rect, (ID2D1Brush *)solid_brush, D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
-      ID2D1Brush_Release((ID2D1Brush *)solid_brush);
-    }
-  }
-*/
   return x;
 }

@@ -1,18 +1,12 @@
 #include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
+#include <string.h>
 
-#define D2D_USE_C_DEFINITIONS
-#define D2D1_INIT_GUID
-#define COBJMACROS
-#define CINTERFACE
+
 #define WIND32_MEAN_AND_LEAN
-
 #include <windows.h>
 #include <windowsx.h>
-#include "dwrite.h"
-//#include <dwrite/dwrite.h>
-#include <d2d1.h>
-#include <d2d1helper.h>
-#include <wincodec.h>
 
 #include "api/api.h"
 #include "renderer.h"
@@ -23,27 +17,18 @@ IMAGE_DOS_HEADER __ImageBase;
 #define HINST_THISCOMPONENT ((HINSTANCE)&__ImageBase)
 #endif
 
-// Define the factory GUID ourselves
-static GUID D2DFactory_GUID = { 0x06152247, 0x6f50, 0x465a, { 0x92, 0x45, 0x11, 0x8b, 0xfd, 0x3b, 0x60, 0x07 } };
-static GUID DWriteFactory_GUID = { 0xb859ee5a, 0xd838, 0x4b5b, { 0xa2, 0xe8, 0x1a, 0xdc, 0x7d, 0x93, 0xdb, 0x48 } };
-
-SDL_Window *window;
-
 HWND hwnd;
-ID2D1Factory * d2d_factory;
-IDWriteFactory * write_factory;
 int last_mouse_x = -1;
 int last_mouse_y = -1;
 
 
 static double get_scale(void) {
-  float dpi;
-  SDL_GetDisplayDPI(0, NULL, &dpi, NULL);
-#if _WIN32
-  return dpi / 96.0;
-#else
-  return 1.0;
-#endif
+  HINSTANCE lib = LoadLibrary("user32.dll");
+  int (*GetDpiForWindow)(HWND) = (void*) GetProcAddress(lib, "GetDpiForWindow");
+  float dpi = GetDpiForWindow(hwnd) / 96.0;
+  FreeLibrary(lib);
+
+  return dpi;
 }
 
 
@@ -62,11 +47,6 @@ void get_exe_filename(char *buf, int sz) {
 #else
   strcpy(buf, "./lite");
 #endif
-}
-
-float to_dips_size(float points)
-{
-   return (points / 72.0f) * 96.0f;
 }
 
 wchar_t * to_wstr(const char * in, int * text_length)
@@ -102,30 +82,6 @@ static void init_window_icon(void) {
 #endif
 #endif
 }
-
-static HRESULT create_device_independent_resources(void) {
-  HRESULT result = S_OK;
-
-  result = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &D2DFactory_GUID, NULL, (void **)&d2d_factory);
-  if (FAILED(result))
-  {
-    printf("Could not create D2D Factory\n");
-    return result;
-  }
-
-  IUnknown * factory;
-  result = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, &DWriteFactory_GUID, &factory);
-  if (FAILED(result))
-  {
-    printf("Could not create DirectWrite Factory\n");
-    ID2D1Factory_Release(d2d_factory);
-    return result;
-  }
-
-  write_factory = (IDWriteFactory *)factory;
-  return result;
-}
-
 
 static LRESULT window_proc(HWND hwnd, UINT message, WPARAM w_param, LPARAM l_param) {
    LRESULT result = 0;
@@ -229,6 +185,29 @@ static LRESULT window_proc(HWND hwnd, UINT message, WPARAM w_param, LPARAM l_par
       }
       break;
 
+    case WM_LBUTTONDBLCLK:
+    case WM_RBUTTONDBLCLK:
+      {
+        event_t event = { .type = EVENT_MOUSEPRESS, .mousepress.x = GET_X_LPARAM(l_param), .mousepress.y = GET_Y_LPARAM(l_param), .mousepress.clicks = 2 };
+
+        switch (message)
+        {
+           case WM_LBUTTONDBLCLK:
+              SetCapture(hwnd);
+              event.mousepress.button = 1;
+              break;
+
+           case WM_RBUTTONDBLCLK:
+              event.mousepress.button = 3;
+              break;
+        }
+
+        event_push(event);
+        result = 0;
+        handled = TRUE;
+      }
+      break;
+
     case WM_MOUSEMOVE:
       {
         event_t event = { .type = EVENT_MOUSEMOVED, .mousemoved.x = GET_X_LPARAM(l_param), .mousemoved.y = GET_Y_LPARAM(l_param) };
@@ -263,30 +242,17 @@ static LRESULT window_proc(HWND hwnd, UINT message, WPARAM w_param, LPARAM l_par
 }
 
 
-int main(int argc, char **argv) {
+//int main(int argc, char **argv) {
+int WinMain(HINSTANCE h_instance, HINSTANCE h_prev_instance, LPSTR cmd_line, int show_cmd) {
+
+  HINSTANCE lib = LoadLibrary("user32.dll");
+  int (*SetProcessDPIAware)() = (void*) GetProcAddress(lib, "SetProcessDPIAware");
+  SetProcessDPIAware();
+  FreeLibrary(lib);
+
   const wchar_t * CLASS_NAME = L"LiteClass";
-
-  printf("Test\n");
-
-  if (FAILED(CoInitialize(NULL)))
-  {
-    printf("CoInitialize failed\n");
-    return 1;
-  }
-
-  printf("Creating Device Independent Resources...\n");
-
-  HRESULT result = create_device_independent_resources();
-  if (FAILED(result))
-  {
-    CoUninitialize();
-    return 1;
-  }
-
-  //SetProcessDPIAware();
-
   WNDCLASSW window_class = { sizeof(WNDCLASSW) };
-  window_class.style = CS_HREDRAW | CS_VREDRAW;
+  window_class.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
   window_class.lpfnWndProc = window_proc;
   window_class.cbClsExtra = 0;
   window_class.cbWndExtra = sizeof(LONG_PTR);
@@ -298,59 +264,43 @@ int main(int argc, char **argv) {
 
   RegisterClassW(&window_class);
 
-  float dpiX = 96.0f;
-  float dpiY = 96.0f;
+  int screen_width = GetSystemMetrics(SM_CXSCREEN);
+  int screen_height = GetSystemMetrics(SM_CYSCREEN);
 
-  ID2D1Factory_GetDesktopDpi(d2d_factory, &dpiX, &dpiY);
+  int window_width = ceil(screen_width * 0.8f);
+  int window_height = ceil(screen_height * 0.8f);
 
-  int screenWidth = GetSystemMetrics(SM_CXSCREEN);
-  int screenHeight = GetSystemMetrics(SM_CYSCREEN);
-
-  int windowWidth = ceil(screenWidth * 0.8f * dpiX / 96.0f);
-  int windowHeight = ceil(screenHeight * 0.8f * dpiY / 96.0f);
-
-  int windowLeft = (screenWidth - windowWidth) / 2;
-  int windowTop = (screenHeight - windowHeight) / 2;
-
-  printf("Creating Window...\n");
+  int window_left = (screen_width - window_width) / 2;
+  int window_top = (screen_height - window_height) / 2;
 
   hwnd = CreateWindowExW(0,
                          CLASS_NAME,
                          L"",
                          WS_OVERLAPPEDWINDOW,
-                         windowLeft,
-                         windowTop,
-                         windowWidth,
-                         windowHeight,
+                         window_left,
+                         window_top,
+                         window_width,
+                         window_height,
                          NULL,
                          NULL,
                          HINST_THISCOMPONENT,
                          NULL);
-  result = hwnd ? S_OK : E_FAIL;
-  if (FAILED(result))
-  {
-    printf("Failed to create window\n");
-    IDWriteFactory_Release(write_factory);
-    ID2D1Factory_Release(d2d_factory);
-    CoUninitialize();
+  if (hwnd == NULL)
     return 1;
-  }
-
-  printf("Window created\n");
 
   ShowWindow(hwnd, SW_SHOWNORMAL);
   UpdateWindow(hwnd);
 
   init_window_icon();
-  ren_init();
+  ren_init(window_width, window_height);
 
   lua_State *L = luaL_newstate();
   luaL_openlibs(L);
   api_load_libs(L);
 
   lua_newtable(L);
-  for (int i = 0; i < argc; i++) {
-    lua_pushstring(L, argv[i]);
+  for (int i = 0; i < __argc; i++) {
+    lua_pushstring(L, __argv[i]);
     lua_rawseti(L, -2, i + 1);
   }
   lua_setglobal(L, "ARGS");
@@ -392,10 +342,6 @@ int main(int argc, char **argv) {
 
   ren_close();
   lua_close(L);
-
-  IDWriteFactory_Release(write_factory);
-  ID2D1Factory_Release(d2d_factory);
-  CoUninitialize();
 
   return EXIT_SUCCESS;
 }

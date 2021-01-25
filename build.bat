@@ -7,12 +7,10 @@ echo compiling (windows)...
 
 windres res.rc -O coff -o res.res
 gcc src/*.c src/api/*.c src/lib/lua52/*.c src/lib/stb/*.c^
-    -g -s -std=gnu11 -fno-strict-aliasing -Isrc -DLUA_USE_POPEN^
-    -Iwinlib/SDL2-2.0.10/x86_64-w64-mingw32/include^
-    -lmingw32 -lm -lSDL2main -lSDL2 -ld2d1 -luser32 -lole32 -ldwrite -Lwinlib/SDL2-2.0.10/x86_64-w64-mingw32/lib^
+    -O3 -s -std=gnu11 -fno-strict-aliasing -Isrc -DLUA_USE_POPEN^
+    -lmingw32 -lm -luser32 -lgdi32 -lole32^
     -o lite.exe
 
-    rem -O3 -s -std=gnu11 -fno-strict-aliasing -Isrc -DLUA_USE_POPEN^
     rem -mwindows res.res^
-
+    
 echo done
