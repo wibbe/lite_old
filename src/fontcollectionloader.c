@@ -99,8 +99,6 @@ ULONG STDMETHODCALLTYPE IFontCollectionLoader_Release(IDWriteFontCollectionLoade
 }
 
 HRESULT STDMETHODCALLTYPE IFontCollectionLoader_QueryInterface(IDWriteFontCollectionLoader * this, REFIID iid, void ** ppv_object) {
-  printf("IFontCollectionLoader_QueryInterface()\n");
-
   if (IsEqualIID(iid, &IDWriteFontCollectionLoader_GUID))
   {
     *ppv_object = this;

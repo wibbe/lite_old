@@ -74,7 +74,7 @@ void get_exe_filename(char *buf, int sz) {
 #endif
 }
 
-static float to_dips_size(float points)
+float to_dips_size(float points)
 {
    return (points / 72.0f) * 96.0f;
 }
@@ -165,6 +165,7 @@ static LRESULT window_proc(HWND hwnd, UINT message, WPARAM w_param, LPARAM l_par
     case WM_SIZE:
       {
         event_t event = { .type = EVENT_RESIZE, .resize.width = LOWORD(l_param), .resize.height = HIWORD(l_param) };
+        ren_resize(event.resize.width, event.resize.height);
         event_push(event);
         result = 0;
         handled = TRUE;

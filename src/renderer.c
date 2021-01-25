@@ -39,6 +39,8 @@ struct RenFont {
   GlyphSet *sets[MAX_GLYPHSET];
   float size;
   int height;
+
+  IDWriteTextFormat * text_format;
 };
 
 extern HWND hwnd;
@@ -54,6 +56,10 @@ static int has_clip_rect = 0;
 
 static SDL_Window *window;
 static struct { int left, top, right, bottom; } clip;
+
+
+extern wchar_t * to_wstr(const char * in, int * text_length);
+extern float to_dips_size(float points);
 
 
 static void* check_alloc(void *ptr) {
@@ -243,6 +249,12 @@ void ren_get_size(int *x, int *y) {
   SDL_Surface *surf = SDL_GetWindowSurface(window);
   *x = surf->w;
   *y = surf->h;
+
+  if (render_target) {
+    D2D1_SIZE_F size = ID2D1HwndRenderTarget_GetSize(render_target);
+    *x = size.width;
+    *y = size.height;
+  }
 }
 
 
@@ -320,9 +332,99 @@ RenFont* ren_load_font(const char *filename, float size) {
   RenFont *font = NULL;
   FILE *fp = NULL;
 
+  printf("Loading font %s\n", filename);
+  wchar_t * font_filename = to_wstr(filename, NULL);
+
+  IDWriteFontFile * font_file[1];
+  HRESULT result = IDWriteFactory_CreateFontFileReference(write_factory, font_filename, NULL, &font_file[0]);
+  free(font_filename);
+  if (FAILED(result)) {
+    printf("Could not load font file\n");
+    return 0;
+  }
+
+  IDWriteFontFace * font_face;
+  result = IDWriteFactory_CreateFontFace(write_factory, DWRITE_FONT_FACE_TYPE_TRUETYPE, 1, font_file, 0, DWRITE_FONT_SIMULATIONS_NONE, &font_face);
+  IDWriteFontFile_Release(font_file[0]);
+  if (FAILED(result)) {
+    printf("Could not create font face\n");
+    return 0;
+  }
+
+  IDWriteFont * dwrite_font;
+  result = IDWriteFontCollection_GetFontFromFontFace(font_collection, font_face, &dwrite_font);
+  if (FAILED(result)) {
+    printf("Could not get font from font face\n");
+    IDWriteFontFace_Release(font_face);
+    return 0;
+  }
+
+  IDWriteFontFamily * font_family;
+  result = IDWriteFont_GetFontFamily(dwrite_font, &font_family);
+  if (FAILED(result)) {
+    printf("Could not get font family\n");
+    IDWriteFontFamily_Release(font_family);
+    IDWriteFont_Release(dwrite_font);
+    IDWriteFontFace_Release(font_face);
+    return 0;
+  }
+
+
+  IDWriteLocalizedStrings * family_names;
+  result = IDWriteFontFamily_GetFamilyNames(font_family, &family_names);
+  if (FAILED(result)) {
+    printf("Could not get face names\n");
+    IDWriteLocalizedStrings_Release(family_names);
+    IDWriteFontFamily_Release(font_family);
+    IDWriteFont_Release(dwrite_font);
+    IDWriteFontFace_Release(font_face);
+    return 0;
+  }
+
+  // Use the first family name in the string. (This might not work for every font)
+  UINT32 index = 0;
+  UINT32 length = 0;
+  IDWriteLocalizedStrings_GetStringLength(family_names, index, &length);
+
+  wchar_t * family_name = malloc(sizeof(wchar_t) * (length + 1));
+  IDWriteLocalizedStrings_GetString(family_names, index, family_name, length + 1);
+  wprintf(L"Family Name: %s\n", family_name);
+
+  IDWriteTextFormat * text_format;
+  result = IDWriteFactory_CreateTextFormat(write_factory,
+                                           family_name,
+                                           font_collection,
+                                           DWRITE_FONT_WEIGHT_NORMAL,
+                                           DWRITE_FONT_STYLE_NORMAL,
+                                           DWRITE_FONT_STRETCH_NORMAL,
+                                           //to_dips_size(size),
+                                           size,
+                                           L"en-us",
+                                           &text_format);
+  free(family_name);
+
+  if (FAILED(result)) {
+    printf("Could not create text format object\n");
+    IDWriteLocalizedStrings_Release(family_names);
+    IDWriteFontFamily_Release(font_family);
+    IDWriteFont_Release(dwrite_font);
+    IDWriteFontFace_Release(font_face);
+    return 0;
+  }
+
+  IDWriteTextFormat_SetTextAlignment(text_format, DWRITE_TEXT_ALIGNMENT_LEADING);
+  IDWriteTextFormat_SetParagraphAlignment(text_format, DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+
+  //free(family_name);
+  IDWriteLocalizedStrings_Release(family_names);
+  IDWriteFontFamily_Release(font_family);
+  IDWriteFont_Release(dwrite_font);
+  IDWriteFontFace_Release(font_face);
+
   /* init font */
   font = check_alloc(calloc(1, sizeof(RenFont)));
   font->size = size;
+  font->text_format = text_format;
 
   /* load font into buffer */
   fp = fopen(filename, "rb");
@@ -368,6 +470,12 @@ void ren_free_font(RenFont *font) {
       free(set);
     }
   }
+
+  if (font->text_format != NULL) {
+    IDWriteTextFormat_Release(font->text_format);
+    font->text_format = NULL;
+  }
+
   free(font->data);
   free(font);
 }
@@ -453,29 +561,31 @@ void ren_draw_rect(RenRect rect, RenColor color) {
     rect_draw_loop(blend_pixel(*d, color));
   }
 
-  D2D1_COLOR_F d2d_color = {
-    .r = color.r / 255.0f,
-    .g = color.g / 255.0f,
-    .b = color.b / 255.0f,
-    .a = color.a / 255.0f,
-  };
-  D2D1_BRUSH_PROPERTIES props = {
-    .opacity = color.a,
-    .transform = identity_matrix(),
-  };
-
-  ID2D1SolidColorBrush * solid_brush = NULL;
-  HRESULT result = ID2D1HwndRenderTarget_CreateSolidColorBrush(render_target, &d2d_color, &props, &solid_brush);
-  if (SUCCEEDED(result))
-  {
-    D2D1_RECT_F d2d_rect = {
-      .left   = rect.x,
-      .top    = rect.y,
-      .right  = rect.x + rect.width,
-      .bottom = rect.y + rect.height,
+  if (can_paint) {
+    D2D1_COLOR_F d2d_color = {
+      .r = color.r / 255.0f,
+      .g = color.g / 255.0f,
+      .b = color.b / 255.0f,
+      .a = color.a / 255.0f,
     };
-    ID2D1HwndRenderTarget_FillRectangle(render_target, &d2d_rect, (ID2D1Brush *)solid_brush);
-    ID2D1Brush_Release((ID2D1Brush *)solid_brush);
+    D2D1_BRUSH_PROPERTIES props = {
+      .opacity = color.a,
+      .transform = identity_matrix(),
+    };
+
+    ID2D1SolidColorBrush * solid_brush = NULL;
+    HRESULT result = ID2D1HwndRenderTarget_CreateSolidColorBrush(render_target, &d2d_color, &props, &solid_brush);
+    if (SUCCEEDED(result))
+    {
+      D2D1_RECT_F d2d_rect = {
+        .left   = rect.x,
+        .top    = rect.y,
+        .right  = rect.x + rect.width,
+        .bottom = rect.y + rect.height,
+      };
+      ID2D1HwndRenderTarget_FillRectangle(render_target, &d2d_rect, (ID2D1Brush *)solid_brush);
+      ID2D1Brush_Release((ID2D1Brush *)solid_brush);
+    }
   }
 }
 
@@ -530,5 +640,45 @@ int ren_draw_text(RenFont *font, const char *text, int x, int y, RenColor color)
     ren_draw_image(set->image, &rect, x + g->xoff, y + g->yoff, color);
     x += g->xadvance;
   }
+
+  if (can_paint) {
+    int str_len;
+    wchar_t * str = to_wstr(text, &str_len);
+    D2D1_RECT_F d2d_rect = {
+      .left   = x,
+      .top    = y,
+      .right  = x + 1000,
+      .bottom = y + 1000,
+    };
+
+    D2D1_COLOR_F d2d_color = {
+      .r = color.r / 255.0f,
+      .g = color.g / 255.0f,
+      .b = color.b / 255.0f,
+      .a = color.a / 255.0f,
+    };
+    D2D1_BRUSH_PROPERTIES props = {
+      .opacity = color.a,
+      .transform = identity_matrix(),
+    };
+
+    ID2D1SolidColorBrush * solid_brush = NULL;
+    HRESULT result = ID2D1HwndRenderTarget_CreateSolidColorBrush(render_target, &d2d_color, &props, &solid_brush);
+    if (SUCCEEDED(result))
+    {
+      ID2D1HwndRenderTarget_DrawText(render_target, str, str_len, font->text_format, &d2d_rect, (ID2D1Brush *)solid_brush, D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+      ID2D1Brush_Release((ID2D1Brush *)solid_brush);
+    }
+
+
+
+    /*
+   app->renderTarget->DrawText(text, len,
+                               app->fonts[font].format,
+                               toD2DRect(bounds),
+                               app->brushes[brush].brush);
+    */
+  }
+
   return x;
 }
