@@ -1,5 +1,4 @@
 #include <stdio.h>
-#include <SDL2/SDL.h>
 
 #define D2D_USE_C_DEFINITIONS
 #define D2D1_INIT_GUID
@@ -17,15 +16,6 @@
 
 #include "api/api.h"
 #include "renderer.h"
-
-#ifdef _WIN32
-  #include <windows.h>
-#elif __linux__
-  #include <unistd.h>
-#elif __APPLE__
-  #include <mach-o/dyld.h>
-#endif
-
 #include "event.h"
 
 #ifndef HINST_THISCOMPONENT
@@ -96,6 +86,7 @@ wchar_t * to_wstr(const char * in, int * text_length)
 
 
 static void init_window_icon(void) {
+#if 0
 #ifndef _WIN32
   #include "../icon.inl"
   (void) icon_rgba_len; /* unused */
@@ -108,6 +99,7 @@ static void init_window_icon(void) {
     0xff000000);
   SDL_SetWindowIcon(window, surf);
   SDL_FreeSurface(surf);
+#endif
 #endif
 }
 
@@ -349,32 +341,12 @@ int main(int argc, char **argv) {
   ShowWindow(hwnd, SW_SHOWNORMAL);
   UpdateWindow(hwnd);
 
-  SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS);
-  SDL_EnableScreenSaver();
-  SDL_EventState(SDL_DROPFILE, SDL_ENABLE);
-  atexit(SDL_Quit);
-
-#ifdef SDL_HINT_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR /* Available since 2.0.8 */
-  SDL_SetHint(SDL_HINT_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR, "0");
-#endif
-#if SDL_VERSION_ATLEAST(2, 0, 5)
-  SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
-#endif
-
-  SDL_DisplayMode dm;
-  SDL_GetCurrentDisplayMode(0, &dm);
-
-  window = SDL_CreateWindow(
-    "", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, dm.w * 0.8, dm.h * 0.8,
-    SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_HIDDEN);
   init_window_icon();
-  ren_init(window);
-
+  ren_init();
 
   lua_State *L = luaL_newstate();
   luaL_openlibs(L);
   api_load_libs(L);
-
 
   lua_newtable(L);
   for (int i = 0; i < argc; i++) {
@@ -386,7 +358,7 @@ int main(int argc, char **argv) {
   lua_pushstring(L, "1.11");
   lua_setglobal(L, "VERSION");
 
-  lua_pushstring(L, SDL_GetPlatform());
+  lua_pushstring(L, "windows");
   lua_setglobal(L, "PLATFORM");
 
   lua_pushnumber(L, get_scale());
@@ -419,9 +391,7 @@ int main(int argc, char **argv) {
     "end)");
 
   ren_close();
-
   lua_close(L);
-  SDL_DestroyWindow(window);
 
   IDWriteFactory_Release(write_factory);
   ID2D1Factory_Release(d2d_factory);

@@ -146,12 +146,13 @@ static void discard_device_resources(void) {
 }
 
 
-void ren_init(SDL_Window *win) {
+void ren_init(void) {
+  /*
   assert(win);
   window = win;
   SDL_Surface *surf = SDL_GetWindowSurface(window);
   ren_set_clip_rect( (RenRect) { 0, 0, surf->w, surf->h } );
-
+  */
   IFontCollectionLoaderCreate(&font_collection_loader);
   IDWriteFactory_RegisterFontCollectionLoader(write_factory, font_collection_loader);
 
@@ -212,12 +213,14 @@ void ren_end_frame(void) {
 }
 
 void ren_update_rects(RenRect *rects, int count) {
+  /*
   SDL_UpdateWindowSurfaceRects(window, (SDL_Rect*) rects, count);
   static bool initial_frame = true;
   if (initial_frame) {
     SDL_ShowWindow(window);
     initial_frame = false;
   }
+  */
 }
 
 
@@ -246,14 +249,17 @@ void ren_set_clip_rect(RenRect rect) {
 
 
 void ren_get_size(int *x, int *y) {
-  SDL_Surface *surf = SDL_GetWindowSurface(window);
-  *x = surf->w;
-  *y = surf->h;
+  //SDL_Surface *surf = SDL_GetWindowSurface(window);
+  //*x = surf->w;
+  //*y = surf->h;
 
   if (render_target) {
     D2D1_SIZE_F size = ID2D1HwndRenderTarget_GetSize(render_target);
     *x = size.width;
     *y = size.height;
+  } else {
+    *x = 0;
+    *y = 0;
   }
 }
 
@@ -415,7 +421,6 @@ RenFont* ren_load_font(const char *filename, float size) {
   IDWriteTextFormat_SetTextAlignment(text_format, DWRITE_TEXT_ALIGNMENT_LEADING);
   IDWriteTextFormat_SetParagraphAlignment(text_format, DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
 
-  //free(family_name);
   IDWriteLocalizedStrings_Release(family_names);
   IDWriteFontFamily_Release(font_family);
   IDWriteFont_Release(dwrite_font);
@@ -542,7 +547,7 @@ static inline RenColor blend_pixel2(RenColor dst, RenColor src, RenColor color) 
 
 void ren_draw_rect(RenRect rect, RenColor color) {
   if (color.a == 0) { return; }
-
+/*
   int x1 = rect.x < clip.left ? clip.left : rect.x;
   int y1 = rect.y < clip.top  ? clip.top  : rect.y;
   int x2 = rect.x + rect.width;
@@ -560,7 +565,7 @@ void ren_draw_rect(RenRect rect, RenColor color) {
   } else {
     rect_draw_loop(blend_pixel(*d, color));
   }
-
+*/
   if (can_paint) {
     D2D1_COLOR_F d2d_color = {
       .r = color.r / 255.0f,
@@ -594,6 +599,7 @@ void ren_draw_image(RenImage *image, RenRect *sub, int x, int y, RenColor color)
   if (color.a == 0) { return; }
 
   /* clip */
+  /*
   int n;
   if ((n = clip.left - x) > 0) { sub->width  -= n; sub->x += n; x += n; }
   if ((n = clip.top  - y) > 0) { sub->height -= n; sub->y += n; y += n; }
@@ -603,8 +609,9 @@ void ren_draw_image(RenImage *image, RenRect *sub, int x, int y, RenColor color)
   if (sub->width <= 0 || sub->height <= 0) {
     return;
   }
-
+  */
   /* draw */
+  /*
   SDL_Surface *surf = SDL_GetWindowSurface(window);
   RenColor *s = image->pixels;
   RenColor *d = (RenColor*) surf->pixels;
@@ -622,10 +629,12 @@ void ren_draw_image(RenImage *image, RenRect *sub, int x, int y, RenColor color)
     d += dr;
     s += sr;
   }
+  */
 }
 
 
 int ren_draw_text(RenFont *font, const char *text, int x, int y, RenColor color) {
+  /*
   RenRect rect;
   const char *p = text;
   unsigned codepoint;
@@ -640,7 +649,8 @@ int ren_draw_text(RenFont *font, const char *text, int x, int y, RenColor color)
     ren_draw_image(set->image, &rect, x + g->xoff, y + g->yoff, color);
     x += g->xadvance;
   }
-
+  */
+/*
   if (can_paint) {
     int str_len;
     wchar_t * str = to_wstr(text, &str_len);
@@ -669,16 +679,7 @@ int ren_draw_text(RenFont *font, const char *text, int x, int y, RenColor color)
       ID2D1HwndRenderTarget_DrawText(render_target, str, str_len, font->text_format, &d2d_rect, (ID2D1Brush *)solid_brush, D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
       ID2D1Brush_Release((ID2D1Brush *)solid_brush);
     }
-
-
-
-    /*
-   app->renderTarget->DrawText(text, len,
-                               app->fonts[font].format,
-                               toD2DRect(bounds),
-                               app->brushes[brush].brush);
-    */
   }
-
+*/
   return x;
 }

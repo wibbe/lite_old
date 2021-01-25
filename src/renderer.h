@@ -11,7 +11,7 @@ typedef struct { uint8_t b, g, r, a; } RenColor;
 typedef struct { int x, y, width, height; } RenRect;
 
 
-void ren_init(SDL_Window *win);
+void ren_init(void);
 void ren_close(void);
 void ren_update_rects(RenRect *rects, int count);
 void ren_set_clip_rect(RenRect rect);

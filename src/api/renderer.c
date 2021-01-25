@@ -38,15 +38,15 @@ static int f_get_size(lua_State *L) {
 
 
 static int f_begin_frame(lua_State *L) {
-  //rencache_begin_frame();
-  ren_begin_frame();
+  rencache_begin_frame();
+  //ren_begin_frame();
   return 0;
 }
 
 
 static int f_end_frame(lua_State *L) {
-  //rencache_end_frame();
-  ren_end_frame();
+  rencache_end_frame();
+  //ren_end_frame();
   return 0;
 }
 
@@ -57,8 +57,8 @@ static int f_set_clip_rect(lua_State *L) {
   rect.y = luaL_checknumber(L, 2);
   rect.width = luaL_checknumber(L, 3);
   rect.height = luaL_checknumber(L, 4);
-  //rencache_set_clip_rect(rect);
-  ren_set_clip_rect(rect);
+  rencache_set_clip_rect(rect);
+  //ren_set_clip_rect(rect);
   return 0;
 }
 
@@ -70,8 +70,8 @@ static int f_draw_rect(lua_State *L) {
   rect.width = luaL_checknumber(L, 3);
   rect.height = luaL_checknumber(L, 4);
   RenColor color = checkcolor(L, 5, 255);
-  //rencache_draw_rect(rect, color);
-  ren_draw_rect(rect, color);
+  rencache_draw_rect(rect, color);
+  //ren_draw_rect(rect, color);
   return 0;
 }
 
@@ -82,8 +82,8 @@ static int f_draw_text(lua_State *L) {
   int x = luaL_checknumber(L, 3);
   int y = luaL_checknumber(L, 4);
   RenColor color = checkcolor(L, 5, 255);
-  //x = rencache_draw_text(*font, text, x, y, color);
-  x = ren_draw_text(*font, text, x, y, color);
+  x = rencache_draw_text(*font, text, x, y, color);
+  //x = ren_draw_text(*font, text, x, y, color);
   lua_pushnumber(L, x);
   return 1;
 }
