@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <SDL2/SDL.h>
+#include <SDL2/SDL_ttf.h>
 #include "api/api.h"
 #include "renderer.h"
 
@@ -15,7 +16,7 @@
 SDL_Window *window;
 
 
-static double get_scale(void) {
+double get_scale(void) {
   float dpi;
   SDL_GetDisplayDPI(0, NULL, &dpi, NULL);
 #if _WIN32
@@ -72,6 +73,9 @@ int main(int argc, char **argv) {
   SDL_EnableScreenSaver();
   SDL_EventState(SDL_DROPFILE, SDL_ENABLE);
   atexit(SDL_Quit);
+
+  TTF_Init();
+  atexit(TTF_Quit);
 
 #ifdef SDL_HINT_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR /* Available since 2.0.8 */
   SDL_SetHint(SDL_HINT_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR, "0");
