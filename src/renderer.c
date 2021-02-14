@@ -178,7 +178,10 @@ int ren_get_font_width(RenFont *font, const char *text) {
     GlyphSet * set = get_glyphset(font, codepoint);
     Glyph * g = &set->glyphs[codepoint & 0xff];
     if (g->surf != NULL)
-      x += g->advance;
+      if (codepoint == '\t')
+        x += g->advance - (x % g->advance);
+      else
+        x += g->advance;
   }
   return x;
 }
@@ -268,7 +271,10 @@ int ren_draw_text(RenFont *font, const char *text, int x, int y, RenColor color)
         SDL_SetSurfaceColorMod(g->surf, color.r, color.g, color.b);
         SDL_BlitSurface(g->surf, NULL, surf, &target_rect);
 
-        x += g->advance;
+        if (codepoint == '\t')
+          x += g->advance - (x % g->advance);
+        else
+          x += g->advance;
       }
     }
 
