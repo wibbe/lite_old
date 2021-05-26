@@ -10,7 +10,7 @@
 
 
 typedef struct {
-  SDL_Surface * surf;
+  SDL_Texture *texture;
   int advance;
 } Glyph;
 
@@ -28,6 +28,7 @@ struct RenFont {
 
 
 static SDL_Window *window;
+static SDL_Renderer *renderer;
 static struct { int left, top, right, bottom; } clip;
 
 
@@ -63,18 +64,29 @@ static void* check_alloc(void *ptr) {
 void ren_init(SDL_Window *win) {
   assert(win);
   window = win;
-  SDL_Surface *surf = SDL_GetWindowSurface(window);
-  ren_set_clip_rect( (RenRect) { 0, 0, surf->w, surf->h } );
+  renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+
+  int width, height;
+  SDL_GetRendererOutputSize(renderer, &width, &height);
+
+  ren_set_clip_rect( (RenRect) { 0, 0, width, height } );
+}
+
+void ren_shutdown(void) {
+  SDL_DestroyRenderer(renderer);
+  renderer = NULL;
 }
 
 
 void ren_update_rects(RenRect *rects, int count) {
+  /*
   SDL_UpdateWindowSurfaceRects(window, (SDL_Rect*) rects, count);
   static bool initial_frame = true;
   if (initial_frame) {
     SDL_ShowWindow(window);
     initial_frame = false;
   }
+  */
 }
 
 
@@ -83,6 +95,15 @@ void ren_set_clip_rect(RenRect rect) {
   clip.top    = rect.y;
   clip.right  = rect.x + rect.width;
   clip.bottom = rect.y + rect.height;
+
+  SDL_Rect r = {
+    .x = rect.x,
+    .y = rect.y,
+    .w = rect.width,
+    .h = rect.height,
+  };
+
+  SDL_RenderSetClipRect(renderer, &r);
 }
 
 
@@ -101,9 +122,11 @@ static GlyphSet * load_glyphset(RenFont * font, int idx) {
     TTF_GlyphMetrics(font->font, idx * 256 + i, NULL, NULL, NULL, NULL, &set->glyphs[i].advance);
     short ch = idx * 256 + i;
     if (TTF_GlyphIsProvided(font->font, ch)) {
-      set->glyphs[i].surf = TTF_RenderGlyph_Blended(font->font, ch, (SDL_Color) { .r = 255, .g = 255, .b = 255, .a = 255 });
+      SDL_Surface *surf = TTF_RenderGlyph_Blended(font->font, ch, (SDL_Color) { .r = 255, .g = 255, .b = 255, .a = 255 });
+      set->glyphs[i].texture = SDL_CreateTextureFromSurface(renderer, surf);
+      SDL_FreeSurface(surf);
     } else {
-      set->glyphs[i].surf = NULL;
+      set->glyphs[i].texture = NULL;
     }
   }
 
@@ -122,6 +145,8 @@ static GlyphSet * get_glyphset(RenFont * font, int codepoint) {
 
 RenFont* ren_load_font(const char * filename, float size) {
   RenFont *font = NULL;
+
+  printf("Loading font %s\n", filename);
 
   TTF_Font * ttf_font = TTF_OpenFont(filename ,size * get_scale());
   if (ttf_font == NULL) {
@@ -147,8 +172,8 @@ void ren_free_font(RenFont *font) {
     if (font->sets[i] != NULL)
     {
       for (int j = 0; j < 256; ++j)
-        SDL_FreeSurface(font->sets[i]->glyphs[j].surf);
-
+        SDL_DestroyTexture(font->sets[i]->glyphs[j].texture);
+        
       free(font->sets[i]);
     }
   }
@@ -177,7 +202,7 @@ int ren_get_font_width(RenFont *font, const char *text) {
     p = utf8_to_codepoint(p, &codepoint);
     GlyphSet * set = get_glyphset(font, codepoint);
     Glyph * g = &set->glyphs[codepoint & 0xff];
-    if (g->surf != NULL)
+    if (g->texture != NULL)
       if (codepoint == '\t')
         x += g->advance - (x % g->advance);
       else
@@ -192,53 +217,34 @@ int ren_get_font_height(RenFont *font) {
 }
 
 
-static inline RenColor blend_pixel(RenColor dst, RenColor src) {
-  int ia = 0xff - src.a;
-  dst.r = ((src.r * src.a) + (dst.r * ia)) >> 8;
-  dst.g = ((src.g * src.a) + (dst.g * ia)) >> 8;
-  dst.b = ((src.b * src.a) + (dst.b * ia)) >> 8;
-  return dst;
+void ren_begin_frame(void) {
+  SDL_RenderClear(renderer);
 }
 
 
-static inline RenColor blend_pixel2(RenColor dst, RenColor src, RenColor color) {
-  src.a = (src.a * color.a) >> 8;
-  int ia = 0xff - src.a;
-  dst.r = ((src.r * color.r * src.a) >> 16) + ((dst.r * ia) >> 8);
-  dst.g = ((src.g * color.g * src.a) >> 16) + ((dst.g * ia) >> 8);
-  dst.b = ((src.b * color.b * src.a) >> 16) + ((dst.b * ia) >> 8);
-  return dst;
+void ren_end_frame(void) {
+  SDL_RenderPresent(renderer);
 }
 
-
-#define rect_draw_loop(expr)        \
-  for (int j = y1; j < y2; j++) {   \
-    for (int i = x1; i < x2; i++) { \
-      *d = expr;                    \
-      d++;                          \
-    }                               \
-    d += dr;                        \
-  }
 
 void ren_draw_rect(RenRect rect, RenColor color) {
   if (color.a == 0) { return; }
 
-  int x1 = rect.x < clip.left ? clip.left : rect.x;
-  int y1 = rect.y < clip.top  ? clip.top  : rect.y;
-  int x2 = rect.x + rect.width;
-  int y2 = rect.y + rect.height;
-  x2 = x2 > clip.right  ? clip.right  : x2;
-  y2 = y2 > clip.bottom ? clip.bottom : y2;
-
-  SDL_Surface *surf = SDL_GetWindowSurface(window);
-  RenColor *d = (RenColor*) surf->pixels;
-  d += x1 + y1 * surf->w;
-  int dr = surf->w - (x2 - x1);
+  SDL_Rect r = {
+    .x = rect.x,
+    .y = rect.y,
+    .w = rect.width,
+    .h = rect.height,
+  };
 
   if (color.a == 0xff) {
-    rect_draw_loop(color);
+    SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+    SDL_RenderFillRect(renderer, &r);
   } else {
-    rect_draw_loop(blend_pixel(*d, color));
+    SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    SDL_RenderFillRect(renderer, &r);
   }
 }
 
@@ -247,13 +253,11 @@ int ren_draw_text(RenFont *font, const char *text, int x, int y, RenColor color)
   if (color.a == 0) {
     x += ren_get_font_width(font, text);
   } else {
-    SDL_Surface *surf = SDL_GetWindowSurface(window);
-
     SDL_Rect clip_rect = {
       .x = clip.left, .y = clip.top,
       .w = clip.right - clip.left, .h = clip.bottom - clip.top
     };
-    SDL_SetClipRect(surf, &clip_rect);
+    SDL_RenderSetClipRect(renderer, &clip_rect);
 
     const char *p = text;
     unsigned codepoint;
@@ -262,14 +266,18 @@ int ren_draw_text(RenFont *font, const char *text, int x, int y, RenColor color)
       GlyphSet * set = get_glyphset(font, codepoint);
       Glyph * g = &set->glyphs[codepoint & 0xff];
 
-      if (g->surf != NULL) {
+      if (g->texture != NULL) {
+        int tex_w, tex_h;
+        SDL_QueryTexture(g->texture, NULL, NULL, &tex_w, &tex_h);
+
+
         SDL_Rect target_rect = {
           .x = x, .y = y,
-          .w = g->surf->w, .h = g->surf->h
+          .w = tex_w, .h = tex_h
         };
 
-        SDL_SetSurfaceColorMod(g->surf, color.r, color.g, color.b);
-        SDL_BlitSurface(g->surf, NULL, surf, &target_rect);
+        SDL_SetTextureColorMod(g->texture, color.r, color.g, color.b);
+        SDL_RenderCopy(renderer, g->texture, NULL, &target_rect);
 
         if (codepoint == '\t')
           x += g->advance - (x % g->advance);
@@ -277,8 +285,6 @@ int ren_draw_text(RenFont *font, const char *text, int x, int y, RenColor color)
           x += g->advance;
       }
     }
-
-    SDL_SetClipRect(surf, NULL);
   }
 
   return x;

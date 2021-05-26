@@ -6,9 +6,11 @@
 #include <errno.h>
 #include <sys/stat.h>
 #include "api.h"
-#include "rencache.h"
 #ifdef _WIN32
   #include <windows.h>
+  #define COBJMACROS
+  #undef WIDL_C_INLINE_WRAPPERS
+  #include <shobjidl.h>
 #endif
 
 extern SDL_Window *window;
@@ -57,7 +59,6 @@ top:
         lua_pushnumber(L, e.window.data2);
         return 3;
       } else if (e.window.event == SDL_WINDOWEVENT_EXPOSED) {
-        rencache_invalidate();
         lua_pushstring(L, "exposed");
         return 1;
       }
@@ -377,6 +378,7 @@ static int f_fuzzy_match(lua_State *L) {
   lua_pushnumber(L, score - (int) strlen(str));
   return 1;
 }
+
 
 
 static const luaL_Reg lib[] = {

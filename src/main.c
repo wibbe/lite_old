@@ -67,6 +67,7 @@ int main(int argc, char **argv) {
   HINSTANCE lib = LoadLibrary("user32.dll");
   int (*SetProcessDPIAware)() = (void*) GetProcAddress(lib, "SetProcessDPIAware");
   SetProcessDPIAware();
+  CoInitialize(NULL);
 #endif
 
   SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS);
@@ -87,9 +88,8 @@ int main(int argc, char **argv) {
   SDL_DisplayMode dm;
   SDL_GetCurrentDisplayMode(0, &dm);
 
-  window = SDL_CreateWindow(
-    "", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, dm.w * 0.8, dm.h * 0.8,
-    SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_HIDDEN);
+  window = SDL_CreateWindow("", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, dm.w * 0.8, dm.h * 0.8,
+                            SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_OPENGL); //SDL_WINDOW_HIDDEN
   init_window_icon();
   ren_init(window);
 
@@ -143,6 +143,7 @@ int main(int argc, char **argv) {
 
 
   lua_close(L);
+  ren_shutdown();
   SDL_DestroyWindow(window);
 
   return EXIT_SUCCESS;
