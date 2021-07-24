@@ -6,6 +6,7 @@ static int f_load(lua_State *L) {
   const char *filename  = luaL_checkstring(L, 1);
   float size = luaL_checknumber(L, 2);
   RenFont **self = lua_newuserdata(L, sizeof(*self));
+  //RenFont **self = lua_newuserdatauv(L, sizeof(*self), 1);
   luaL_setmetatable(L, API_TYPE_FONT);
   *self = ren_load_font(filename, size);
   if (!*self) { luaL_error(L, "failed to load font"); }
